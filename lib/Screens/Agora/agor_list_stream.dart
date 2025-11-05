@@ -98,7 +98,7 @@ class _AgoraListStreamState extends State<AgoraListStream>
       print("*************************************************************");
       print("Viewer Response Data");
       print("Viewer Response body: ${response.body}");
-      print("*************************************************************");
+      print("***************************************************");
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
@@ -546,7 +546,6 @@ class AgoraViewerScreen extends StatefulWidget {
 }
 
 class _AgoraViewerScreenState extends State<AgoraViewerScreen> {
-  
   late RtcEngine _engine;
   bool isHostJoined = false;
   final List<int> _remoteUids = [];
