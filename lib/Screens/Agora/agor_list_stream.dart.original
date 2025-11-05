@@ -1,0 +1,459 @@
+import 'dart:convert';
+
+import 'package:agora_rtc_engine/agora_rtc_engine.dart';
+import 'package:cosmose/models/login_response.dart';
+import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:permission_handler/permission_handler.dart';
+
+class AgoraListStream extends StatefulWidget {
+  final LoginResponse loginResponse;
+  const AgoraListStream({super.key, required this.loginResponse});
+
+  @override
+  State<AgoraListStream> createState() => _AgoraListStreamState();
+}
+
+class _AgoraListStreamState extends State<AgoraListStream> {
+  List<dynamic> liveStreams = [];
+  bool isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    fetchLiveStreams();
+  }
+
+  Future<void> fetchLiveStreams() async {
+    final url = Uri.parse("https://cosmoseworld.fr/api/list-live-stream");
+
+    try {
+      final response = await http.get(
+        url,
+        headers: {
+          "Authorization": "Bearer ${widget.loginResponse.token}",
+          "Content-Type": "application/json",
+        },
+      );
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        setState(() {
+          liveStreams = data['live_streams'];
+          isLoading = false;
+        });
+      } else {
+        print("Failed to fetch live streams.");
+        setState(() => isLoading = false);
+      }
+    } catch (e) {
+      print("Error fetching streams: $e");
+      setState(() => isLoading = false);
+    }
+  }
+
+  Future<void> joinLiveStream(String channelName) async {
+    final url = Uri.parse("https://cosmoseworld.fr/api/live-stream/join");
+
+    try {
+      final response = await http.post(
+        url,
+        headers: {
+          "Authorization": "Bearer ${widget.loginResponse.token}",
+          "Content-Type": "application/json",
+        },
+        body: jsonEncode({"channel_name": channelName}),
+      );
+      print("*************************************************************");
+      print("Viewer Response Data");
+      print("Viewer Response body: ${response.body}");
+      print("*************************************************************");
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final token = data['token'];
+        final appId = data['app_id'];
+        final userId = data['user_id'];
+        final channel = data['channel_name'];
+
+        // Debug token information
+        print("Token received: $token");
+        print("Token length: ${token.length}");
+        print("App ID: $appId");
+        print("User ID: $userId");
+        print("Channel: $channel");
+        print("Navigating to viewer screen...");
+
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder:
+                (context) => AgoraViewerScreen(
+                  token: token,
+                  channelName: channel,
+                  appId: appId,
+                  userId: userId,
+                ),
+          ),
+        );
+      } else {
+        print("Failed to join live stream.");
+        print("Status code: ${response.statusCode}");
+        print("Response body: ${response.body}");
+      }
+    } catch (e) {
+      print("Error joining stream: $e");
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text("Live Streams")),
+      body:
+          isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : liveStreams.isEmpty
+              ? const Center(child: Text("No live streams available."))
+              : ListView.builder(
+                itemCount: liveStreams.length,
+                itemBuilder: (context, index) {
+                  final stream = liveStreams[index];
+                  return Card(
+                    margin: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                    elevation: 3,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: ListTile(
+                      title: Text(stream['farm_name'] ?? "No Farm Name"),
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text("Channel: ${stream['channel_name']}"),
+                          Text("User ID: ${stream['user_id']}"),
+                        ],
+                      ),
+                      onTap: () {
+                        print(
+                          "***********************************************************",
+                        );
+                        print("Tapped on stream: ${stream['channel_name']}");
+
+                        print(
+                          "***********************************************************",
+                        );
+                        joinLiveStream(stream['channel_name']);
+                      },
+                    ),
+                  );
+                },
+              ),
+    );
+  }
+}
+
+class AgoraViewerScreen extends StatefulWidget {
+  final String appId;
+  final String token;
+  final String channelName;
+  final int userId;
+
+  const AgoraViewerScreen({
+    super.key,
+    required this.appId,
+    required this.token,
+    required this.channelName,
+    required this.userId,
+  });
+
+  // Custom debug info method instead of toString override
+  String getDebugInfo() {
+    return 'AgoraViewerScreen(appId: $appId, token: ${token.length > 10 ? "${token.substring(0, 10)}..." : token}, channelName: $channelName, userId: $userId)';
+  }
+
+  @override
+  State<AgoraViewerScreen> createState() => _AgoraViewerScreenState();
+}
+
+class _AgoraViewerScreenState extends State<AgoraViewerScreen> {
+  late RtcEngine _engine;
+  bool isHostJoined = false;
+  final List<int> _remoteUids = [];
+
+  @override
+  void initState() {
+    super.initState();
+    initializeAgora();
+  }
+
+  Future<void> initializeAgora() async {
+      ),
+    );
+
+    await _engine.setClientRole(role: ClientRoleType.clientRoleAudience);
+
+    _engine.registerEventHandler(
+      RtcEngineEventHandler(
+        onUserJoined: (connection, remoteUid, elapsed) {
+          print("🎉 Host joined with UID: $remoteUid");
+          print("🎉 Connection channel: ${connection.channelId}");
+          setState(() {
+            isHostJoined = true;
+            _remoteUids.add(remoteUid);
+          });
+        },
+        onUserOffline: (connection, remoteUid, reason) {
+          print("👋 Host left: $remoteUid");
+          setState(() {
+            _remoteUids.remove(remoteUid);
+            isHostJoined = _remoteUids.isNotEmpty;
+          });
+        },
+        onRemoteVideoStateChanged: (
+          connection,
+          remoteUid,
+          state,
+          reason,
+          elapsed,
+        ) {
+          print(
+            "📹 Remote video state changed: UID=$remoteUid, State=$state, Reason=$reason",
+          );
+        },
+        onRemoteAudioStateChanged: (
+          connection,
+          remoteUid,
+          state,
+          reason,
+          elapsed,
+        ) {
+          print(
+            "🔊 Remote audio state changed: UID=$remoteUid, State=$state, Reason=$reason",
+          );
+        },
+
+        onConnectionStateChanged: (connection, state, reason) {
+          print("🔌 Connection state changed: State=$state, Reason=$reason");
+        },
+        onTokenPrivilegeWillExpire: (connection, token) {
+          print("⚠️ Token will expire soon");
+        },
+        onJoinChannelSuccess: (connection, elapsed) {
+          print("Viewer joined channel: ${connection.channelId}");
+        },
+        onError: (ErrorCodeType err, String msg) {
+          print("Agora error: $err, message: $msg");
+        },
+      ),
+    );
+
+    await _engine.enableVideo();
+
+    // Set video encoder configuration for better viewing experience
+    await _engine.setVideoEncoderConfiguration(
+      const VideoEncoderConfiguration(
+        dimensions: VideoDimensions(width: 640, height: 360),
+        frameRate: 15,
+        bitrate: 0, // Auto bitrate
+      ),
+    );
+
+    // Clean up the token - remove any whitespace that might be causing issues
+    final String cleanToken = widget.token.trim();
+    print("🔑 Original token length: ${widget.token.length}");
+    print("🔑 Cleaned token length: ${cleanToken.length}");
+
+    // Make sure we have a valid token
+    if (cleanToken.isEmpty) {
+      print("❌ Error: Empty token provided");
+      return;
+    }
+
+    if (cleanToken.length > 20) {
+      print("🔑 Using token: ${cleanToken.substring(0, 20)}...");
+    } else {
+      print("🔑 Using token: $cleanToken");
+    }
+
+    // Set up event handlers before joining the channel
+    _engine.registerEventHandler(
+      RtcEngineEventHandler(
+        onTokenPrivilegeWillExpire: (RtcConnection connection, String token) {
+          print("⚠️ Token will expire soon, need to refresh");
+        },
+        onRequestToken: (RtcConnection connection) {
+          print("⚠️ Token has expired, need a new token");
+        },
+      ),
+    );
+
+    try {
+      print("🔌 Attempting to join channel: ${widget.channelName}");
+      // Join with the provided userId
+      await _engine.joinChannel(
+        token: cleanToken,
+        channelId: widget.channelName,
+        uid: widget.userId,
+        options: const ChannelMediaOptions(
+          clientRoleType: ClientRoleType.clientRoleAudience,
+          audienceLatencyLevel:
+              AudienceLatencyLevelType.audienceLatencyLevelLowLatency,
+          autoSubscribeVideo: true,
+          autoSubscribeAudio: true,
+        ),
+      );
+
+      print("✅ Successfully joined channel with UID: ${widget.userId}");
+    } catch (e) {
+      print("❌ Error joining channel: $e");
+
+      // If the first attempt fails, try with a different approach
+      try {
+        print("🔄 Trying alternative approach with UID 0...");
+        await _engine.joinChannel(
+          token: cleanToken,
+          channelId: widget.channelName,
+          uid: 0, // Let Agora assign a UID
+          options: const ChannelMediaOptions(
+            clientRoleType: ClientRoleType.clientRoleAudience,
+            audienceLatencyLevel:
+                AudienceLatencyLevelType.audienceLatencyLevelLowLatency,
+            autoSubscribeVideo: true,
+            autoSubscribeAudio: true,
+          ),
+        );
+      } catch (e2) {
+        print("❌ Second attempt also failed: $e2");
+        print("❓ Detailed error: $e2");
+
+        // As a last resort, try without a token (if the app ID has App Certificate disabled)
+        try {
+          print("⚠️ Last resort: Trying to join without token...");
+          await _engine.joinChannel(
+            token: "",
+            channelId: widget.channelName,
+            uid: widget.userId,
+            options: const ChannelMediaOptions(
+              clientRoleType: ClientRoleType.clientRoleAudience,
+              audienceLatencyLevel:
+                  AudienceLatencyLevelType.audienceLatencyLevelLowLatency,
+              autoSubscribeVideo: true,
+              autoSubscribeAudio: true,
+            ),
+          );
+        } catch (e3) {
+          print(
+            "❌ All attempts failed. Please check your Agora configuration.",
+          );
+        }
+      }
+    }
+
+    print(
+      "🔍 Viewer joined channel: ${widget.channelName} with UID: ${widget.userId}",
+    );
+  }
+
+  @override
+  void dispose() {
+    _engine.leaveChannel();
+    _engine.release();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text("Watching: ${widget.channelName}"),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: () {
+              // Debug info
+              print("🔄 Debug info:");
+              print("Remote UIDs: $_remoteUids");
+              print("isHostJoined: $isHostJoined");
+
+              // Force refresh the remote video view
+              if (_remoteUids.isEmpty) {
+                print("⚠️ No remote UIDs found, trying to refresh");
+                setState(() {});
+              }
+            },
+          ),
+        ],
+      ),
+      body: Center(
+        child:
+            _remoteUids.isNotEmpty
+                ? Stack(
+                  children: [
+                    // Main remote video view
+                    AgoraVideoView(
+                      controller: VideoViewController.remote(
+                        rtcEngine: _engine,
+                        canvas: VideoCanvas(uid: _remoteUids[0]),
+                        connection: RtcConnection(
+                          channelId: widget.channelName,
+                        ),
+                      ),
+                    ),
+                    // Debug overlay
+                    Positioned(
+                      top: 10,
+                      left: 10,
+                      child: Container(
+                        padding: const EdgeInsets.all(8),
+                        color: Colors.black.withOpacity(0.5),
+                        child: Text(
+                          "Connected to: ${_remoteUids.join(', ')}",
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                      ),
+                    ),
+                    // Additional remote videos if any
+                    if (_remoteUids.length > 1)
+                      Positioned(
+                        top: 10,
+                        right: 10,
+                        child: Container(
+                          width: 120,
+                          height: 120,
+                          child: AgoraVideoView(
+                            controller: VideoViewController.remote(
+                              rtcEngine: _engine,
+                              canvas: VideoCanvas(uid: _remoteUids[1]),
+                              connection: RtcConnection(
+                                channelId: widget.channelName,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                )
+                : Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Text(
+                      "Waiting for host to join...",
+                      style: TextStyle(fontSize: 18),
+                    ),
+                    const SizedBox(height: 20),
+                    CircularProgressIndicator(),
+                    const SizedBox(height: 20),
+                    Text(
+                      "Channel: ${widget.channelName}\nViewer ID: ${widget.userId}",
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ),
+      ),
+    );
+  }
+}
